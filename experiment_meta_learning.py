@@ -32,11 +32,11 @@ from jaxline import utils
 from ml_collections import config_dict
 import optax
 
-from functa import data_utils
-from functa import function_reps
-from functa import helpers
-from functa import minimal_nerf
-from functa import pytree_conversions
+import data_utils
+import function_reps
+import helpers
+import minimal_nerf
+import pytree_conversions
 
 FLAGS = flags.FLAGS
 
@@ -86,11 +86,14 @@ def get_config():
   exp.model.depth = 15
   exp.model.modulate_scale = False
   exp.model.modulate_shift = True
+  exp.model.modulate_lora = True
+  exp.model.lora_rank = 1
+  exp.model.lora_alpha = 1.
   exp.model.l2_weight = 0.
   exp.model.noise_std = 0.
   # The following three attributes are only used if model.type is
   # 'latent_modulated_siren'
-  exp.model.latent_dim = 128
+  exp.model.latent_dim = 2048
   # Empty tuple below corresponds to a linear map. This always gave better PSNR
   # compared to deeper MLPs.
   exp.model.layer_sizes = ()
@@ -128,13 +131,13 @@ def get_config():
   exp.evaluation.shuffle = True
 
   # Training loop config: log and checkpoint every minute.
-  config.training_steps = int(5e5)
+  config.training_steps = int(5e4)
   config.log_train_data_interval = 60
   config.log_tensors_interval = 60
   config.save_checkpoint_interval = 60
   config.train_checkpoint_all_hosts = False
-  config.checkpoint_dir = '/tmp/training/'
-  config.eval_specific_checkpoint_dir = '/tmp/training/'
+  config.checkpoint_dir = '/home/lion/functa/'
+  config.eval_specific_checkpoint_dir = '/home/lion/functa/'
 
   return config
 
@@ -226,6 +229,9 @@ class Experiment(experiment.AbstractExperiment):
           w0=self.config.model.w0,
           modulate_scale=self.config.model.modulate_scale,
           modulate_shift=self.config.model.modulate_shift,
+          modulate_lora=self.config.model.modulate_lora,
+          lora_rank=self.config.model.lora_rank,
+          lora_alpha=self.config.model.lora_alpha,
           latent_dim=self.config.model.latent_dim,
           layer_sizes=self.config.model.layer_sizes,
           latent_init_scale=self.config.model.latent_init_scale,

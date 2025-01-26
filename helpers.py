@@ -24,9 +24,9 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from functa import function_reps
-from functa import pytree_conversions
-from functa.minimal_nerf import render_rays
+import function_reps
+import pytree_conversions
+from minimal_nerf import render_rays
 
 Array = jnp.ndarray
 PRNGKey = chex.PRNGKey

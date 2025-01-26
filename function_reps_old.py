@@ -92,9 +92,6 @@ class ModulatedSirenLayer(hk.Module):
                is_last: bool = False,
                modulate_scale: bool = True,
                modulate_shift: bool = True,
-               modulate_lora: bool = True,
-               lora_rank: int = 1,
-               lora_alpha: float = 1.0,
                apply_activation: bool = True):
     """Constructor.
 
@@ -116,31 +113,16 @@ class ModulatedSirenLayer(hk.Module):
     self.is_last = is_last
     self.modulate_scale = modulate_scale
     self.modulate_shift = modulate_shift
-    self.modulate_lora = modulate_lora
-    self.lora_rank = lora_rank
-    self.lora_alpha = lora_alpha
     self.apply_activation = apply_activation
     # Follow initialization scheme from SIREN
     self.init_range = 1 / f_in if is_first else jnp.sqrt(6 / f_in) / w0
 
   def __call__(self, x: Array) -> Array:
-    w_init = hk.initializers.RandomUniform(-self.init_range, self.init_range)
-    W = hk.get_parameter("W", shape=[self.f_in, self.f_out], init=w_init)
-    b = hk.get_parameter("b", shape=[self.f_out], init=jnp.zeros)
-
-    # -- 2) Optionally add a LoRA update:  W + alpha * (U @ V).
-    if self.lora_rank > 0:
-      # Typically one might initialize U and V with small variance
-      # to keep the LoRA update initially small. Here we do zero init for clarity.
-      U = hk.get_parameter("lora_U", [self.f_in, self.lora_rank],
-                           init=jnp.zeros)
-      V = hk.get_parameter("lora_V", [self.lora_rank, self.f_out],
-                           init=jnp.zeros)
-      # Add LoRA update
-      W = W + self.lora_alpha * (U @ V)
-
-    # -- 3) Linear transform
-    x = x @ W + b
+    # Shape (n, f_in) -> (n, f_out)
+    x = hk.Linear(
+        output_size=self.f_out,
+        w_init=hk.initializers.RandomUniform(-self.init_range,
+                                             self.init_range))(x)
     # Apply non-linearities
     if self.is_last:
       # We assume target data (e.g. RGB values of pixels) lies in [0, 1]. To
@@ -404,9 +386,6 @@ class LatentModulatedSiren(hk.Module):
                w0: float = 1.,
                modulate_scale: bool = True,
                modulate_shift: bool = True,
-               modulate_lora: bool = True,
-               lora_rank: int = 1,
-               lora_alpha: float = 1.0,
                latent_init_scale: float = 0.01,
                use_meta_sgd: bool = False,
                meta_sgd_init_range: Tuple[float, float] = (0.005, 0.1),
@@ -440,9 +419,6 @@ class LatentModulatedSiren(hk.Module):
     self.w0 = w0
     self.modulate_scale = modulate_scale
     self.modulate_shift = modulate_shift
-    self.modulate_lora = modulate_lora
-    self.lora_rank = lora_rank
-    self.lora_alpha = lora_alpha
     self.latent_init_scale = latent_init_scale
     self.use_meta_sgd = use_meta_sgd
     self.meta_sgd_init_range = meta_sgd_init_range
@@ -507,9 +483,6 @@ class LatentModulatedSiren(hk.Module):
         w0=self.w0,
         modulate_scale=False,
         modulate_shift=False,
-        modulate_lora=self.modulate_lora,
-        lora_rank=self.lora_rank,
-        lora_alpha=self.lora_alpha,
         apply_activation=False)(x)
     x = self.modulate(x, modulations[0])
     x = Sine(self.w0)(x)

@@ -57,7 +57,7 @@ class CelebAHqCustom(tfds.core.GeneratorBasedBuilder):
         description=_DESCRIPTION,
         features=tfds.features.FeaturesDict({
             'image':
-                tfds.features.Image(shape=(128, 128, 3), dtype=tf.uint8),
+                tfds.features.Image(shape=(178, 218, 3), dtype=tf.uint8),
         }),
         supervised_keys=None,  # Set to `None` to disable
         homepage='https://github.com/tkarras/progressive_growing_of_gans',
@@ -67,12 +67,10 @@ class CelebAHqCustom(tfds.core.GeneratorBasedBuilder):
   def _split_generators(self, dl_manager: tfds.download.DownloadManager):
     """Returns SplitGenerators."""
     path = dl_manager.download_and_extract(
-        'https://drive.google.com/uc?export=download&confirm=9iBg'
-        '&id=107vh6Tibfs1p8pbc3gql-eVwxiqCD2o4')
+        'https://s3.amazonaws.com/pytorch-tutorial-assets/img_align_celeba.zip')
     # Note that CelebAHQ does not come with a train/test split.
     # This is later split into 90:10 during data processing to create a
     # train/test split.
-    path = path / 'data128x128'
     return {
         'train': self._generate_examples(path),
     }
@@ -80,6 +78,6 @@ class CelebAHqCustom(tfds.core.GeneratorBasedBuilder):
   def _generate_examples(self, path):
     """Yields examples."""
     # The path contains images at 128 resolution.
-    for img_path in path.glob('*.jpg'):
+    for img_path in path.glob('img_align_celeba/*.jpg'):
       # Yields (key, example)
       yield img_path.name, {'image': img_path}
