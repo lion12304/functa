@@ -45,7 +45,7 @@ Batch = Mapping[str, Array]
 OptState = optax.OptState
 PRNGKey = chex.PRNGKey
 Scalars = Mapping[Text, Array]
-
+jax.config.update("jax_default_matmul_precision", "high")
 
 def get_config():
   """Return config object for training."""
