@@ -4,7 +4,7 @@ dill
 dm-haiku
 grpcio==1.49.1
 imageio
-jax
+jax[cuda12]
 jaxlib
 jaxline
 ml_collections
