@@ -86,9 +86,6 @@ def get_config():
   exp.model.depth = 15
   exp.model.modulate_scale = False
   exp.model.modulate_shift = True
-  exp.model.modulate_lora = True
-  exp.model.lora_rank = 1
-  exp.model.lora_alpha = 1.
   exp.model.l2_weight = 0.
   exp.model.noise_std = 0.
   # The following three attributes are only used if model.type is
@@ -108,6 +105,8 @@ def get_config():
   exp.training = config_dict.ConfigDict()
   exp.training.per_device_batch_size = per_device_batch_size
   exp.training.inner_steps = 3
+  exp.training.random_steps = False
+  exp.training.random_steps_range = (3, 6)
   exp.training.repeat = True
   exp.training.coord_noise = False
   # Define subsampling options for scenes
@@ -229,9 +228,6 @@ class Experiment(experiment.AbstractExperiment):
           w0=self.config.model.w0,
           modulate_scale=self.config.model.modulate_scale,
           modulate_shift=self.config.model.modulate_shift,
-          modulate_lora=self.config.model.modulate_lora,
-          lora_rank=self.config.model.lora_rank,
-          lora_alpha=self.config.model.lora_alpha,
           latent_dim=self.config.model.latent_dim,
           layer_sizes=self.config.model.layer_sizes,
           latent_init_scale=self.config.model.latent_init_scale,
@@ -466,6 +462,10 @@ class Experiment(experiment.AbstractExperiment):
     else:
       is_nerf = False
       render_config = None
+    if self.config.training.random_steps:
+      inner_steps = jax.random.randint(
+          rng, shape=(), minval=self.config.training.random_steps_range[0],
+          maxval=self.config.training.random_steps_range[1] + 1)
     return helpers.inner_loop(params, self.forward, self._opt_inner,
                               self.config.training.inner_steps, coords,
                               targets,

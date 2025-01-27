@@ -92,7 +92,8 @@ class ModulatedSirenLayer(hk.Module):
                is_last: bool = False,
                modulate_scale: bool = True,
                modulate_shift: bool = True,
-               apply_activation: bool = True):
+               apply_activation: bool = True,
+               add_lora: bool = True):
     """Constructor.
 
     Args:
@@ -116,13 +117,18 @@ class ModulatedSirenLayer(hk.Module):
     self.apply_activation = apply_activation
     # Follow initialization scheme from SIREN
     self.init_range = 1 / f_in if is_first else jnp.sqrt(6 / f_in) / w0
+    self.add_lora = add_lora
 
-  def __call__(self, x: Array) -> Array:
-    # Shape (n, f_in) -> (n, f_out)
-    x = hk.Linear(
-        output_size=self.f_out,
-        w_init=hk.initializers.RandomUniform(-self.init_range,
-                                             self.init_range))(x)
+  def __call__(self, x: Array, lora_matrix=None) -> Array:
+    W = hk.get_parameter('W', [self.f_in, self.f_out],
+                         init=hk.initializers.RandomUniform(-self.init_range,
+                                                            self.init_range))
+    if self.add_lora:
+      W_new = W + lora_matrix
+    else:
+      W_new = W
+    b = hk.get_parameter('b', [self.f_out], init=jnp.zeros)
+    x = jnp.dot(x, W_new) + b
     # Apply non-linearities
     if self.is_last:
       # We assume target data (e.g. RGB values of pixels) lies in [0, 1]. To
@@ -310,6 +316,8 @@ class LatentToModulation(hk.Module):
                num_modulation_layers: int,
                modulate_scale: bool = True,
                modulate_shift: bool = True,
+               modulate_lora: bool = True,
+               lora_rank: int = 2,
                activation: Callable[[Array], Array] = jax.nn.relu):
     """Constructor.
 
@@ -327,7 +335,7 @@ class LatentToModulation(hk.Module):
     """
     super().__init__()
     # Must modulate at least one of shift and scale
-    assert modulate_scale or modulate_shift
+    assert modulate_scale or modulate_shift or modulate_lora
 
     self.latent_dim = latent_dim
     self.layer_sizes = tuple(layer_sizes)  # counteract XM that converts to list
@@ -335,12 +343,14 @@ class LatentToModulation(hk.Module):
     self.num_modulation_layers = num_modulation_layers
     self.modulate_scale = modulate_scale
     self.modulate_shift = modulate_shift
+    self.modulate_lora = modulate_lora
+    self.lora_rank = lora_rank
 
     # MLP outputs all modulations. We apply modulations on every hidden unit
     # (i.e on width number of units) at every modulation layer.
     # At each of these we apply either a scale or a shift or both,
     # hence total output size is given by following formula
-    self.modulations_per_unit = int(modulate_scale) + int(modulate_shift)
+    self.modulations_per_unit = int(modulate_scale) + int(modulate_shift) + int(modulate_lora) * lora_rank * 2
     self.modulations_per_layer = width * self.modulations_per_unit
     self.output_size = num_modulation_layers * self.modulations_per_layer
 
@@ -355,6 +365,7 @@ class LatentToModulation(hk.Module):
       single_layer_modulations = {}
       # Note that we add 1 to scales so that outputs of MLP will be centered
       # (since scale = 1 corresponds to identity function)
+      # TODO: edit the lora modulations into it correctly, I just did it in a rush
       if self.modulate_scale and self.modulate_shift:
         start = 2 * self.width * i
         single_layer_modulations['scale'] = modulations[start:start +
@@ -370,79 +381,20 @@ class LatentToModulation(hk.Module):
         start = self.width * i
         single_layer_modulations['shift'] = modulations[start:start +
                                                         self.width]
+      if self.modulate_lora:
+        # assume that nothing else is active
+        start = self.lora_rank * 2 * self.width * i
+        single_layer_modulations['lora_U'] = jnp.reshape(
+            modulations[start:start + self.lora_rank * self.width],
+            (self.width, self.lora_rank)
+        )
+        single_layer_modulations['lora_V'] = jnp.reshape(
+            modulations[start + self.lora_rank * self.width:start + self.lora_rank * 2 * self.width],
+            (self.lora_rank, self.width)
+        )
       outputs[i] = single_layer_modulations
     return outputs
 
-class LatentToLoRA(hk.Module):
-    """Generates LoRA matrices (A and B) for each layer from a latent vector."""
-
-    def __init__(
-        self,
-        latent_dim: int,
-        layer_sizes: Tuple[int, ...],
-        num_layers: int,
-        f_in: int,
-        f_out: int,
-        rank: int,
-        name: Optional[str] = None,
-    ):
-        """
-        Args:
-          latent_dim: Dimension of the latent vector (input).
-          layer_sizes: Sizes of the hidden layers in the MLPs for A and B generation.
-          num_layers: Number of layers in the SIREN network (excluding the final output layer).
-          f_in: Input feature size for the first layer.
-          f_out: Output feature size for the hidden layers.
-          rank: LoRA rank (dimension of the low-rank approximation).
-          name: Name of the module.
-        """
-        super().__init__(name=name)
-        self.latent_dim = latent_dim
-        self.layer_sizes = layer_sizes
-        self.num_layers = num_layers
-        self.f_in = f_in
-        self.f_out = f_out
-        self.rank = rank
-
-        # Create separate MLPs for each layer to map latent -> A and B
-        self.layers = []
-        for i in range(num_layers):
-            in_dim = f_in if i == 0 else f_out
-            out_dim = f_out if i == 0 else f_out
-            self.layers.append({
-                "A": hk.nets.MLP(
-                    list(layer_sizes) + [out_dim * rank],
-                    name=f"A_generator_layer_{i}"
-                ),
-                "B": hk.nets.MLP(
-                    list(layer_sizes) + [rank * in_dim],
-                    name=f"B_generator_layer_{i}"
-                )
-            })
-
-    def __call__(self, latent_vector: Array) -> Dict[int, Dict[str, Array]]:
-        """
-        Args:
-          latent_vector: Latent vector of shape [latent_dim].
-
-        Returns:
-          A dictionary mapping layer indices to their respective LoRA matrices:
-          {
-            0: {'A': Array[f_out, rank], 'B': Array[rank, f_in]},
-            1: {'A': Array[f_out, rank], 'B': Array[rank, f_out]},
-            ...
-          }
-        """
-        lora_matrices = {}
-
-        for i, layer in enumerate(self.layers):
-            # Generate A and B matrices for layer i
-            A = layer["A"](latent_vector).reshape(self.f_out, self.rank)
-            B = layer["B"](latent_vector).reshape(self.rank, self.f_in if i == 0 else self.f_out)
-
-            lora_matrices[i] = {"A": A, "B": B}
-
-        return lora_matrices
 
 class LatentModulatedSiren(hk.Module):
   """SIREN model with FiLM modulations generated from a latent vector."""
@@ -456,6 +408,8 @@ class LatentModulatedSiren(hk.Module):
                w0: float = 1.,
                modulate_scale: bool = True,
                modulate_shift: bool = True,
+               modulate_lora: bool = True,
+               lora_rank: int = 2,
                latent_init_scale: float = 0.01,
                use_meta_sgd: bool = False,
                meta_sgd_init_range: Tuple[float, float] = (0.005, 0.1),
@@ -489,6 +443,8 @@ class LatentModulatedSiren(hk.Module):
     self.w0 = w0
     self.modulate_scale = modulate_scale
     self.modulate_shift = modulate_shift
+    self.modulate_lora = modulate_lora
+    self.lora_rank = lora_rank
     self.latent_init_scale = latent_init_scale
     self.use_meta_sgd = use_meta_sgd
     self.meta_sgd_init_range = meta_sgd_init_range
@@ -506,18 +462,12 @@ class LatentModulatedSiren(hk.Module):
         latent_dim=latent_dim,
         layer_sizes=layer_sizes,
         width=width,
-        num_modulation_layers=depth-1,
+        num_modulation_layers=depth-2,
         modulate_scale=modulate_scale,
-        modulate_shift=modulate_shift)
-    
-    self.latent_to_lora = LatentToLoRA(
-        latent_dim=latent_dim,
-        layer_sizes=layer_sizes,
-        num_layers=depth-1,
-        f_in=width,
-        f_out=width,
-        rank=8
-    )
+        modulate_shift=modulate_shift,
+        modulate_lora=modulate_lora,
+        lora_rank=lora_rank
+        )
 
   def modulate(self, x: Array, modulations: Dict[str, Array]) -> Array:
     """Modulates input according to modulations.
@@ -532,27 +482,19 @@ class LatentModulatedSiren(hk.Module):
     """
     if 'scale' in modulations:
       x = modulations['scale'] * x
+      raise NotImplementedError("This function is not implemented for lora modulations")
     if 'shift' in modulations:
       x = x + modulations['shift']
+      raise NotImplementedError("This function is not implemented for lora modulations")
+    if 'lora_U' in modulations:
+      lora_weights = jnp.dot(modulations['lora_U'], modulations['lora_V'])
+      # print to see if the dimensions are correct and the next matmul will work
+      # print(f"lora U shape:{modulations['lora_U'].shape}")
+      # print(f"lora V shape:{modulations['lora_V'].shape}")
+      # print(f"lora weights shape:{lora_weights.shape}")
+      # print(f"x shape:{x.shape}")
+      x = jnp.dot(x, lora_weights)
     return x
-  
-  def apply_lora(self, x: Array, lora: Dict[str, Array]) -> Array:
-    """Applies LoRA to input.
-
-    Args:
-      x: Hidden features of MLP, shape (batch_size, f_in).
-      lora: A dictionary containing two matrices:
-            - 'A': LoRA output matrix, shape (f_out, rank).
-            - 'B': LoRA input matrix, shape (rank, f_in).
-
-    Returns:
-      LoRA contribution: Array of shape (batch_size, f_out).
-    """
-    # Compute the low-rank LoRA weight matrix: W_lora = A @ B
-    W_lora = jnp.matmul(lora['A'], lora['B'])  # Shape: (f_out, f_in)
-    # Apply LoRA: LoRA(x) = W_lora @ x.T -> [batch_size, f_out]
-    return jnp.matmul(x, W_lora.T)  # Transpose W_lora for correct shape
-    
 
   def __call__(self, coords: Array) -> Array:
     """Evaluates model at a batch of coordinates.
@@ -567,15 +509,11 @@ class LatentModulatedSiren(hk.Module):
     # Compute modulations based on latent vector
     latent_vector = self.latent()
     modulations = self.latent_to_modulation(latent_vector)
-    lora = self.latent_to_lora(latent_vector)
 
     # Flatten coordinates
     x = jnp.reshape(coords, (-1, coords.shape[-1]))
 
     # Initial layer (note all modulations are set to False here, since we
-    
-    # x_lora = self.apply_lora(x, lora[0])
-    
     # directly apply modulations from latent_to_modulations output).
     x = ModulatedSirenLayer(
         f_in=x.shape[-1],
@@ -584,24 +522,28 @@ class LatentModulatedSiren(hk.Module):
         w0=self.w0,
         modulate_scale=False,
         modulate_shift=False,
-        apply_activation=False)(x)
-
-    # x = self.modulate(x, modulations[0])
-    x = Sine(self.w0)(x)# + x_lora)
+        apply_activation=False,
+        add_lora=False)(x)
+    # x_lora = self.modulate(x, modulations[0])
+    # x = x_shared + x_lora
+    x = Sine(self.w0)(x)
 
     # Hidden layers
     for i in range(1, self.depth - 1):
-      x_lora = self.apply_lora(x, lora[i])# * 1e-3
-
-      x = ModulatedSirenLayer(
+      lora_u = modulations[i-1]['lora_U']
+      lora_v = modulations[i-1]['lora_V']
+      lora_matrix = jnp.dot(lora_u, lora_v)
+      assert lora_matrix.shape == (self.width, self.width)
+      x_shared = ModulatedSirenLayer(
           f_in=x.shape[-1],
           f_out=self.width,
           w0=self.w0,
           modulate_scale=False,
           modulate_shift=False,
-          apply_activation=False)(x)
-      # x = self.modulate(x, modulations[i])
-      x = Sine(self.w0)(x + x_lora)
+          apply_activation=False)(x, lora_matrix)
+      # x_lora = self.modulate(x, modulations[i-1]) * 1e2 / self.lora_rank
+      # x = x_shared + x_lora
+      x = Sine(self.w0)(x)
 
     # Final layer
     out = ModulatedSirenLayer(
@@ -610,7 +552,8 @@ class LatentModulatedSiren(hk.Module):
         is_last=True,
         w0=self.w0,
         modulate_scale=False,
-        modulate_shift=False)(x)
+        modulate_shift=False,
+        add_lora=False)(x)
 
     # Unflatten output
     return jnp.reshape(out, list(coords.shape[:-1]) + [self.out_channels])
