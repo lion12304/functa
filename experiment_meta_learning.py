@@ -90,7 +90,7 @@ def get_config():
   exp.model.noise_std = 0.
   # The following three attributes are only used if model.type is
   # 'latent_modulated_siren'
-  exp.model.latent_dim = 2048
+  exp.model.latent_dim = 128
   # Empty tuple below corresponds to a linear map. This always gave better PSNR
   # compared to deeper MLPs.
   exp.model.layer_sizes = ()
@@ -309,10 +309,23 @@ class Experiment(experiment.AbstractExperiment):
       coords = coords[:, :, :, :, sample_idx]
 
     # Update model parameters
+    # print(self._params['latent_modulated_siren/modulated_siren_layer_13/linear'])
+    # weights_temp, modulations_temp = function_reps.partition_params(self._params)
+    # print(weights_temp.keys())
+    # print('*'*80)
+    # print(modulations_temp.keys())
+    # print('#'*80)
+    weights_t, modulations_t = function_reps.partition_params(self._params)
+    _, model_grad_t = jax.value_and_grad(self._loss_func)(
+        weights_t, modulations_t, train_batch, coords, rng)
+    print('model_grad_t', model_grad_t)
     self._params, self._opt_state, scalars = (
         self._update_func(self._params, self._opt_state, train_batch,
                           coords, rng))
-
+    # print('*'*80)
+    # print(self._params['latent_modulated_siren/modulated_siren_layer_13/linear'])
+    #'latent_modulated_siren/~/latent_to_lo_ra/~/B_generator_layer_4/~/linear_0'
+    # print('#'*80)
     # Scalars (and global step) have identical copies stored on each device, so
     # get these from first device (but could have chosen any device) to host
     scalars = utils.get_first(scalars)
@@ -369,8 +382,11 @@ class Experiment(experiment.AbstractExperiment):
     # device, we need to communicate gradients between devices. This cannot be
     # done with pmap, so need to use jax.lax.pmean to achieve this)
     model_grad = jax.lax.pmean(model_grad, axis_name='i')
+    # print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0'])
     updates, opt_outer_state = self._opt_outer.update(model_grad,
                                                       opt_outer_state)
+    # print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0'])
+
     # Extract initial modulations (not the fitted ones), since we do not
     # update the meta-learned init
     weights, modulations = function_reps.partition_params(params)
@@ -452,7 +468,7 @@ class Experiment(experiment.AbstractExperiment):
       coords: Shape (*spatial_dims, num_spatial_dims).
         For images: (height, width, 2) or (height * width, 2).
       rng:
-
+__
     Returns:
       Updated params, loss, PSNR
     """

@@ -396,7 +396,7 @@ class LatentToLoRA(hk.Module):
           rank: LoRA rank (dimension of the low-rank approximation).
           name: Name of the module.
         """
-        super().__init__(name=name)
+        super().__init__()
         self.latent_dim = latent_dim
         self.layer_sizes = layer_sizes
         self.num_layers = num_layers
@@ -440,7 +440,8 @@ class LatentToLoRA(hk.Module):
             A = layer["A"](latent_vector).reshape(self.f_out, self.rank)
             B = layer["B"](latent_vector).reshape(self.rank, self.f_in if i == 0 else self.f_out)
 
-            lora_matrices[i] = {"A": A, "B": B}
+            lora_matrices[i] = {"A": A, "B": B}      
+
 
         return lora_matrices
 
