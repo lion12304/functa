@@ -587,7 +587,7 @@ class LatentModulatedSiren(hk.Module):
         modulate_shift=False,
         apply_activation=False)(x)
 
-    # x = self.modulate(x, modulations[0])
+    x = self.modulate(x, modulations[0])
     x = Sine(self.w0)(x)# + x_lora)
 
     # Hidden layers
@@ -601,7 +601,7 @@ class LatentModulatedSiren(hk.Module):
           modulate_scale=False,
           modulate_shift=False,
           apply_activation=False)(x)
-      # x = self.modulate(x, modulations[i])
+      x = self.modulate(x, modulations[i])
       x = Sine(self.w0)(x + x_lora)
 
     # Final layer

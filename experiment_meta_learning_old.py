@@ -38,9 +38,6 @@ import helpers
 import minimal_nerf
 import pytree_conversions
 
-import os
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-
 FLAGS = flags.FLAGS
 
 Array = jnp.ndarray
@@ -48,7 +45,7 @@ Batch = Mapping[str, Array]
 OptState = optax.OptState
 PRNGKey = chex.PRNGKey
 Scalars = Mapping[Text, Array]
-jax.config.update("jax_default_matmul_precision", "high")
+
 
 def get_config():
   """Return config object for training."""
@@ -104,12 +101,10 @@ def get_config():
   exp.model.meta_sgd_clip_range = (0., 1.)
 
   # Training config
-  per_device_batch_size = 1 if exp.dataset.type == 'scene' else 8
+  per_device_batch_size = 1 if exp.dataset.type == 'scene' else 16
   exp.training = config_dict.ConfigDict()
   exp.training.per_device_batch_size = per_device_batch_size
   exp.training.inner_steps = 3
-  exp.training.random_steps = True
-  exp.training.random_steps_range = (3, 6)
   exp.training.repeat = True
   exp.training.coord_noise = False
   # Define subsampling options for scenes
@@ -133,13 +128,13 @@ def get_config():
   exp.evaluation.shuffle = True
 
   # Training loop config: log and checkpoint every minute.
-  config.training_steps = int(5e4)
+  config.training_steps = int(5e5)
   config.log_train_data_interval = 60
   config.log_tensors_interval = 60
   config.save_checkpoint_interval = 60
   config.train_checkpoint_all_hosts = False
-  config.checkpoint_dir = '/home/lion/functa/'
-  config.eval_specific_checkpoint_dir = '/home/lion/functa/'
+  config.checkpoint_dir = '/tmp/training/'
+  config.eval_specific_checkpoint_dir = '/tmp/training/'
 
   return config
 
@@ -312,30 +307,10 @@ class Experiment(experiment.AbstractExperiment):
       coords = coords[:, :, :, :, sample_idx]
 
     # Update model parameters
-    # print(self._params['latent_modulated_siren/modulated_siren_layer_13/linear']['b'][0][0])
-    # print(self._params['latent_modulated_siren/~/latent_to_lo_ra/~/B_generator_layer_4/~/linear_0'])#['b'][0][0])
-    print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0']['b'][0][0])
-    
-    # weights_temp, modulations_temp = function_reps.partition_params(self._params)
-    # print(weights_temp.keys())
-    print('*'*80)
-    # print(modulations_temp.keys())
-    # print('#'*80)
-    # print(f'rng shape: {rng.shape}')
-    # weights_t, modulations_t = function_reps.partition_params(self._params)
-    # _, model_grad_t = jax.value_and_grad(self._loss_func)(
-    #     weights_t, modulations_t, train_batch, coords, rng)
-    # print('model_grad_t', model_grad_t)
     self._params, self._opt_state, scalars = (
         self._update_func(self._params, self._opt_state, train_batch,
                           coords, rng))
-    print('*'*80)
-    # print(self._params['latent_modulated_siren/modulated_siren_layer_13/linear']['b'][0][0])
-    # print(self._params['latent_modulated_siren/~/latent_to_lo_ra/~/B_generator_layer_4/~/linear_0'])#['b'][0][0])
-    print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0']['b'][0][0])
 
-    # 'latent_modulated_siren/~/latent_to_lo_ra/~/B_generator_layer_4/~/linear_0'
-    print('#'*80)
     # Scalars (and global step) have identical copies stored on each device, so
     # get these from first device (but could have chosen any device) to host
     scalars = utils.get_first(scalars)
@@ -392,11 +367,8 @@ class Experiment(experiment.AbstractExperiment):
     # device, we need to communicate gradients between devices. This cannot be
     # done with pmap, so need to use jax.lax.pmean to achieve this)
     model_grad = jax.lax.pmean(model_grad, axis_name='i')
-    # print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0'])
     updates, opt_outer_state = self._opt_outer.update(model_grad,
                                                       opt_outer_state)
-    # print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0'])
-
     # Extract initial modulations (not the fitted ones), since we do not
     # update the meta-learned init
     weights, modulations = function_reps.partition_params(params)
@@ -488,10 +460,6 @@ class Experiment(experiment.AbstractExperiment):
     else:
       is_nerf = False
       render_config = None
-    if self.config.training.random_steps:
-      inner_steps = jax.random.randint(
-          rng, shape=(), minval=self.config.training.random_steps_range[0],
-          maxval=self.config.training.random_steps_range[1] + 1)
     return helpers.inner_loop(params, self.forward, self._opt_inner,
                               self.config.training.inner_steps, coords,
                               targets,
