@@ -104,11 +104,11 @@ def get_config():
   exp.model.meta_sgd_clip_range = (0., 1.)
 
   # Training config
-  per_device_batch_size = 1 if exp.dataset.type == 'scene' else 8
+  per_device_batch_size = 1 if exp.dataset.type == 'scene' else 16
   exp.training = config_dict.ConfigDict()
   exp.training.per_device_batch_size = per_device_batch_size
   exp.training.inner_steps = 3
-  exp.training.random_steps = True
+  exp.training.random_steps = False
   exp.training.random_steps_range = (3, 6)
   exp.training.repeat = True
   exp.training.coord_noise = False
@@ -314,11 +314,11 @@ class Experiment(experiment.AbstractExperiment):
     # Update model parameters
     # print(self._params['latent_modulated_siren/modulated_siren_layer_13/linear']['b'][0][0])
     # print(self._params['latent_modulated_siren/~/latent_to_lo_ra/~/B_generator_layer_4/~/linear_0'])#['b'][0][0])
-    print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0']['b'][0][0])
-    
+    # print(self._params['latent_modulated_siren/~/latent_to_lo_ra/~/mlp_12/~/linear_0'])
+    print(self._params['latent_modulated_siren/~/latent_to_modulation_fr/~/mlp/~/linear_0']['b'][0][0])
     # weights_temp, modulations_temp = function_reps.partition_params(self._params)
     # print(weights_temp.keys())
-    print('*'*80)
+    # print('*'*80)
     # print(modulations_temp.keys())
     # print('#'*80)
     # print(f'rng shape: {rng.shape}')
@@ -332,7 +332,8 @@ class Experiment(experiment.AbstractExperiment):
     print('*'*80)
     # print(self._params['latent_modulated_siren/modulated_siren_layer_13/linear']['b'][0][0])
     # print(self._params['latent_modulated_siren/~/latent_to_lo_ra/~/B_generator_layer_4/~/linear_0'])#['b'][0][0])
-    print(self._params['latent_modulated_siren/~/latent_to_modulation/~/mlp/~/linear_0']['b'][0][0])
+    # print(self._params['latent_modulated_siren/~/latent_to_lo_ra/~/mlp_12/~/linear_0'])
+    print(self._params['latent_modulated_siren/~/latent_to_modulation_fr/~/mlp/~/linear_0']['b'][0][0])
 
     # 'latent_modulated_siren/~/latent_to_lo_ra/~/B_generator_layer_4/~/linear_0'
     print('#'*80)
